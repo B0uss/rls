@@ -1,0 +1,4 @@
+Docker filter=lfs diff=lfs merge=lfs -text
+Desktop filter=lfs diff=lfs merge=lfs -text
+Installer.exe filter=lfs diff=lfs merge=lfs -text
+Docker[[:space:]]Desktop[[:space:]]Installer.exe filter=lfs diff=lfs merge=lfs -text
