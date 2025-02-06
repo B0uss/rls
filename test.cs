@@ -3,8 +3,7 @@ using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Net.Security;
-using System.Runtime.InteropServices;
-using System.Security.Authentication;
+using System.Text;
 using System.Threading.Tasks;
 
 class Program
@@ -18,40 +17,70 @@ class Program
 
         try
         {
-            // Création de l'authentification NTLM via NegotiateAuthentication
+            // Création de l'objet d'authentification NTLM
             var negotiateAuth = new NegotiateAuthentication(new NegotiateAuthenticationClientOptions
             {
-                Package = "NTLM", // Forcer NTLM
+                Package = "NTLM", // Force NTLM
                 Credential = new NetworkCredential(username, password, domain),
-                TargetName = url, // Cible du serveur
-                RequiredProtectionLevel = ProtectionLevel.None, // Pas de chiffrement applicatif
+                TargetName = url, // Nom de la cible
+                RequiredProtectionLevel = ProtectionLevel.None,
                 MutualAuthentication = false
             });
 
             using var client = new HttpClient();
-            var request = new HttpRequestMessage(HttpMethod.Get, url);
 
-            // Envoyer une première requête sans authentification pour obtenir le challenge
+            // Étape 1: Envoyer une requête avec un blob NTLM vide (premier échange)
+            byte[] outputBlob = negotiateAuth.GetOutgoingBlob(null, out NegotiateAuthenticationStatusCode statusCode);
+            if (statusCode == NegotiateAuthenticationStatusCode.Unsupported)
+            {
+                throw new Exception("🚫 NTLM n'est pas supporté !");
+            }
+
+            Console.WriteLine("🔄 Envoi de la première requête NTLM...");
+            var request = new HttpRequestMessage(HttpMethod.Get, url);
+            request.Headers.Authorization = new AuthenticationHeaderValue("NTLM", Convert.ToBase64String(outputBlob));
+
             var response = await client.SendAsync(request);
+
+            // Étape 2: Vérifier si un challenge NTLM est renvoyé
             if (response.StatusCode == HttpStatusCode.Unauthorized)
             {
-                // Récupérer le challenge NTLM du serveur
-                string challenge = response.Headers.WwwAuthenticate.ToString();
-                if (!string.IsNullOrEmpty(challenge))
+                Console.WriteLine("🔄 Le serveur a répondu avec un challenge NTLM...");
+
+                // Extraire le challenge NTLM depuis WWW-Authenticate
+                string ntlmChallenge = null;
+                foreach (var header in response.Headers.WwwAuthenticate)
                 {
-                    // Générer la réponse NTLM basée sur le challenge
-                    byte[]? inputBlob = Convert.FromBase64String(challenge.Split(' ')[1]); // Extraire la partie utile du challenge
-                    byte[] outputBlob = negotiateAuth.GetOutgoingBlob(inputBlob, out NegotiateAuthenticationStatusCode statusCode);
-
-                    if (statusCode == NegotiateAuthenticationStatusCode.Completed || statusCode == NegotiateAuthenticationStatusCode.ContinueNeeded)
+                    if (header.Scheme.Equals("NTLM", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrEmpty(header.Parameter))
                     {
-                        // Ajouter l'entête Authorization avec la réponse NTLM
-                        request = new HttpRequestMessage(HttpMethod.Get, url);
-                        request.Headers.Authorization = new AuthenticationHeaderValue("Negotiate", Convert.ToBase64String(outputBlob));
-
-                        response = await client.SendAsync(request);
+                        ntlmChallenge = header.Parameter; // Récupérer le challenge
+                        break;
                     }
                 }
+
+                if (string.IsNullOrEmpty(ntlmChallenge))
+                {
+                    throw new Exception("⚠️ Impossible de récupérer le challenge NTLM !");
+                }
+
+                Console.WriteLine($"🔑 Challenge NTLM reçu : {ntlmChallenge}");
+
+                // Étape 3: Générer la réponse NTLM
+                byte[] inputBlob = Convert.FromBase64String(ntlmChallenge);
+                outputBlob = negotiateAuth.GetOutgoingBlob(inputBlob, out statusCode);
+
+                if (statusCode == NegotiateAuthenticationStatusCode.Unsupported)
+                {
+                    throw new Exception("🚫 Erreur : NTLM n'est pas supporté !");
+                }
+
+                Console.WriteLine("✅ Génération de la réponse NTLM réussie !");
+
+                // Étape 4: Renvoyer la requête avec l'authentification NTLM
+                request = new HttpRequestMessage(HttpMethod.Get, url);
+                request.Headers.Authorization = new AuthenticationHeaderValue("NTLM", Convert.ToBase64String(outputBlob));
+
+                response = await client.SendAsync(request);
             }
 
             // Vérifier si la connexion est réussie
