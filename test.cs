@@ -43,47 +43,50 @@ class Program
             var response = await client.SendAsync(request);
 
             // 🔹 Étape 2 : Récupérer le challenge NTLM Type 2
-            if (response.StatusCode == HttpStatusCode.Unauthorized)
+            if (response.StatusCode != HttpStatusCode.Unauthorized)
             {
-                Console.WriteLine("🔄 Le serveur a répondu avec un challenge NTLM (Type 2)...");
-
-                // Extraire le challenge NTLM depuis WWW-Authenticate
-                string ntlmChallenge = null;
-                foreach (var header in response.Headers.WwwAuthenticate)
-                {
-                    if (header.Scheme.Equals("NTLM", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrEmpty(header.Parameter))
-                    {
-                        ntlmChallenge = header.Parameter; // Récupérer le challenge
-                        break;
-                    }
-                }
-
-                if (string.IsNullOrEmpty(ntlmChallenge))
-                {
-                    throw new Exception("⚠️ Impossible de récupérer le challenge NTLM !");
-                }
-
-                Console.WriteLine($"🔑 Challenge NTLM (Type 2) reçu : {ntlmChallenge}");
-
-                // 🔹 Étape 3 : Générer la réponse NTLM Type 3
-                byte[] inputBlob = Convert.FromBase64String(ntlmChallenge);
-                byte[] type3Message = negotiateAuth.GetOutgoingBlob(inputBlob, out statusCode);
-
-                if (statusCode == NegotiateAuthenticationStatusCode.Unsupported)
-                {
-                    throw new Exception("🚫 Erreur : NTLM n'est pas supporté !");
-                }
-
-                Console.WriteLine("✅ Génération du message NTLM Type 3 réussie !");
-
-                // 🔹 Étape 4 : Renvoyer la requête avec l'authentification NTLM Type 3
-                request = new HttpRequestMessage(HttpMethod.Get, url);
-                request.Headers.Authorization = new AuthenticationHeaderValue("NTLM", Convert.ToBase64String(type3Message));
-
-                response = await client.SendAsync(request);
+                Console.WriteLine("❌ Le serveur n'a pas demandé d'authentification !");
+                return;
             }
 
-            // Vérifier si la connexion est réussie
+            Console.WriteLine("🔄 Le serveur a répondu avec un challenge NTLM (Type 2)...");
+
+            // Extraire le challenge NTLM depuis WWW-Authenticate
+            string ntlmChallenge = null;
+            foreach (var header in response.Headers.WwwAuthenticate)
+            {
+                if (header.Scheme.Equals("NTLM", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrEmpty(header.Parameter))
+                {
+                    ntlmChallenge = header.Parameter; // Récupérer le challenge
+                    break;
+                }
+            }
+
+            if (string.IsNullOrEmpty(ntlmChallenge))
+            {
+                throw new Exception("⚠️ Impossible de récupérer le challenge NTLM !");
+            }
+
+            Console.WriteLine($"🔑 Challenge NTLM (Type 2) reçu : {ntlmChallenge}");
+
+            // 🔹 Étape 3 : Générer le message NTLM Type 3
+            byte[] inputBlob = Convert.FromBase64String(ntlmChallenge);
+            byte[] type3Message = negotiateAuth.GetOutgoingBlob(inputBlob, out statusCode);
+
+            if (statusCode == NegotiateAuthenticationStatusCode.Unsupported)
+            {
+                throw new Exception("🚫 Erreur : NTLM n'est pas supporté !");
+            }
+
+            Console.WriteLine("✅ Génération du message NTLM Type 3 réussie !");
+
+            // 🔹 Étape 4 : Envoyer une nouvelle requête HTTP avec Type 3
+            request = new HttpRequestMessage(HttpMethod.Get, url);
+            request.Headers.Authorization = new AuthenticationHeaderValue("NTLM", Convert.ToBase64String(type3Message));
+
+            response = await client.SendAsync(request);
+
+            // 🔹 Étape 5 : Vérification du succès
             if (response.IsSuccessStatusCode)
             {
                 Console.WriteLine("✅ Authentification réussie !");
@@ -100,5 +103,4 @@ class Program
             Console.WriteLine($"⚠️ Erreur : {ex.Message}");
         }
     }
-}
 }
